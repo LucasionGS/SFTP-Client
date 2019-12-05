@@ -1,8 +1,16 @@
 const fs = require("fs");
 const sftpClient = require("ssh2-sftp-client");
+const archiver = require("archiver");
 
 let sftp = new sftpClient();
 let cDirectory = "/home/wl";
+let lastCMD = "";
+let sftpData = {
+  "host": "128.76.244.245",
+  "port": "22",
+  "username": "pi",
+  "password": "entotre4",
+};
 
 class Command {
   /**
@@ -38,16 +46,17 @@ function addDefaultCommands()
   new Command("connect", async function() {
     let connection;
     try {
-      connection = await sftp.connect({
-        "host": "128.76.244.245",
-        "port": "22",
-        "username": "pi",
-        "password": "entotre4",
-      }).then(async function() {
+      connection = await sftp.connect(sftpData).then(async function() {
         cDirectory = await sftp.cwd();
       });
     } catch (error) {
-      cmdlog(error.toString());
+      logError(error);
+      logError("Trying to reconnect...");
+      await sftp.end();
+      sftp.on("end", async function(){
+        cmdlog("Disconnected from Server");
+        runCMD("connect");
+      });
       return error;
     }
     cmdlog("Successfully connected to server.");
@@ -74,7 +83,9 @@ function addDefaultCommands()
         if (file.type == "l") {
           color = "lightblue";
         }
-        cmdlog(file.name, color);
+        cmdlog(file.name, color, function() {
+          console.log(file.name);
+        });
       }
       if (files.length == 0) {
         logError("This folder is empty");
@@ -147,8 +158,8 @@ function addDefaultCommands()
         to = "./"+from.split("/").pop();
       }
       cmdlog("Downloading file...");
-      var finishMsg = await sftp.fastGet(from, to);
-      cmdlog(finishMsg, "#00ff15");
+      await sftp.fastGet(from, to);
+      cmdlog(`"${from}" was successfully downloaded to "${to}"`, "#00ff15");
     } catch (error) {
       logError(error);
     }
@@ -168,10 +179,112 @@ function addDefaultCommands()
       }
       to = to.path;
       cmdlog("Uploading file...");
-      var finishMsg = await sftp.fastPut(from, to);
+      await sftp.fastPut(from, to);
       console.log(from);
       console.log(to);  
-      cmdlog(finishMsg, "#00ff15");
+      cmdlog(`"${from}" was successfully uploaded to "${to}"`, "#00ff15");
+    } catch (error) {
+      logError(error);
+    }
+  });
+
+  new Command("putzip", async function(cmd, args) {
+    try {
+      var options = {
+        root: false,
+      }
+      // Check parameters
+      var t_args = args;
+      for (let i = 0; i < t_args.length; i++) {
+        const arg = t_args[i];
+        if (arg.startsWith("-")) {
+          if (arg == "-root") {
+            options.root = true;
+          }
+          unsetArray(args, i);
+        }
+      }
+      
+      var arch = archiver("zip");
+      var localPath = args[1];
+      var output = fs.createWriteStream(localPath+".zip");
+      arch.pipe(output);
+      var stat = fs.statSync(localPath);
+      if (stat.isDirectory()) {
+        if (!options.root) {
+          cmdlog("Adding folder to zip...");
+          arch.directory(localPath, getItemFromPath(localPath));
+        }
+        else {
+          cmdlog("Adding files from folder to zip...");
+          arch.directory(localPath, false);
+        }
+      }
+      else if (stat.isFile()){
+        cmdlog("Zipping file...");
+        arch.file(localPath);
+      }
+      else {
+        logError("unidentified");
+      }
+      arch.finalize();
+      output.on("close", async function() {
+        if (args[2]) {
+          await runCMD('put "'+localPath+'.zip" "'+args[2]+'"');
+        }
+        else {
+          await runCMD('put "'+localPath+'.zip"');
+        }
+        fs.unlinkSync(localPath+'.zip');
+      });
+    } catch (error) {
+      logError(error);
+    }
+  });
+
+  new Command("rm", async function(cmd, args) {
+    try {
+      var options = {
+        type: false,
+      }
+      // Check parameters
+      var t_args = args;
+      for (let i = 0; i < t_args.length; i++) {
+        const arg = t_args[i];
+        if (arg.startsWith("-")) {
+          if (arg == "-d") {
+            options.type = "d";
+          }
+          else if (arg == "-f") {
+            options.type = "-";
+          }
+          else if (arg == "-l") {
+            options.type = "l";
+          }
+          unsetArray(args, i);
+        }
+      }
+
+      var file = await getPath(args[1]);
+      if (!file.type) {
+        logError(`"${file.path}" does not exist.`);
+        return;
+      }
+      else {
+        if (options.type != false) {
+          if (options.type == file.type) {
+            var msg = await sftp.delete(file.path);
+            cmdlog(msg, "#00ff15");
+          }
+          else {
+            logError(`"${file.path}" was of the wrong type "${file.type}", only accepting "${options.type}" with current parameters.`);
+          }
+          return;
+        }
+          var msg = await sftp.delete(file.path);
+          cmdlog(msg, "#00ff15");
+          return;
+      }
     } catch (error) {
       logError(error);
     }
@@ -184,7 +297,8 @@ function addDefaultCommands()
  */
 async function runCMD(command)
 {
-  var rgx = /[^\s"']+|"([^"]*)"|'([^']*)'/g;
+  lastCMD = command;
+  const rgx = /[^\s"']+|"([^"]*)"|'([^']*)'/g;
   const log = document.querySelector("#log");
   const cmdInput = document.querySelector("#input input");
   var fullCommand = command;
@@ -203,17 +317,17 @@ async function runCMD(command)
   cmdInput.setAttribute("disabled", true);
   cmdInput.value = "";
 
-  cmdlog(fullCommand);
+  cmdlog("<span style=\"color: green;\">&gt; </span> "+fullCommand);
 
   for (let i = 0; i < cmdList.length; i++) {
     const cmd = cmdList[i];
     if (cmd.command == command) {
       cmdInput.setAttribute("placeholder", "Executing...");
-      await cmd.fn(command, args, rest);
+      var returnValue = await cmd.fn(command, args, rest);
       cmdInput.removeAttribute("disabled");
       cmdInput.removeAttribute("placeholder");
       cmdInput.focus();
-      return;
+      return returnValue;
     }
   }
   // If no command available:
@@ -245,17 +359,55 @@ function separator(returnText = false){
  * Log to CMD log
  * @param {string} text
  * @param {boolean} breakLine
+ * @param {Function|string|false} onclickFN
  */
-function cmdlog(text, color = "white"){
+function cmdlog(text, color = "white", onclickFN = false){
   const log = document.querySelector("#log");
   var textToLog = markdown(text.toString())+"<br>";
+  var id = generateRandomString("log_");
   if (color != "") {
-    textToLog = "<span style=\"color:"+color+";\">"+textToLog+"</span>";
+    textToLog = "<div id=\""+id+"\" style=\"color:"+color+";\">"+textToLog+"</div>";
   }
   
   log.innerHTML += textToLog;
   scrollToBottom();
+
+  if (onclickFN) {
+    funcs[id] = onclickFN;
+    var obj = document.getElementById(id);
+    obj.toggleAttribute("clickable");
+    if (typeof onclickFN == "function") {
+      obj.setAttribute("onclick", "funcs[this.id]()");
+      console.log("Set as Function");
+      // console.log(obj);
+    }
+    if (typeof onclickFN == "string") {
+      obj.setAttribute("onclick", onclickFN);
+      console.log("Set as string");
+    }
+  }
+  setTimeout(() => {
+  }, 0);
   return textToLog;
+}
+
+/**
+ * Generate a random string with optional prefix.
+ * @param {string} prefix Something to be fixed in front of the random string.
+ */
+function generateRandomString(prefix = "")
+{
+  var symbols = ["a","b","c","d","e","f","g","h","i","j","k","l","m","n","o","p","q","r","s","t","u","v","x","w","z","A","B","C","D","E","F","G","H","I","J","K","L","M","N","O","P","Q","R","S","T","U","V","X","W","Z","1","2","3","4","5","6","7","8","9","0"];
+  var string = prefix;
+  for (let i = 0; i < 10; i++) {
+    string += symbols[randomInt(symbols.length-1)];
+  }
+  return string;
+}
+
+function randomInt(max = 100, min = 0)
+{
+  return Math.round(Math.random() * (+max - +min) + +min);
 }
 
 function scrollToBottom()
@@ -288,11 +440,6 @@ function logError(text) {
   cmdlog(text, color = "red");
 }
 
-// Run at start
-setTimeout(() => {
-  runCMD("connect");
-}, 100);
-
 /**
  * 
  * @param {string} path Path to get
@@ -314,4 +461,63 @@ async function getPath(path)
     "path": fullPath,
     "type": type
   }
+}
+
+// Key presses
+window.addEventListener("keydown", function(e) {
+  if (e.ctrlKey && e.key.toLowerCase() == "t") {
+    toggleCMD();
+  }
+  if (e.key == "ArrowUp") {
+    const cmdInput = document.querySelector("#input input");
+    if (document.activeElement == cmdInput) {
+      cmdInput.value = lastCMD;
+      setTimeout(() => {
+        cmdInput.setSelectionRange(lastCMD.length, lastCMD.length);
+      }, 0);
+    }
+  }
+});
+
+function toggleCMD()
+{
+  const cmd = document.querySelector("#cmd");
+  const cmdInput = document.querySelector("#input input");
+  cmd.toggleAttribute("disabled");
+
+  if (cmd.hasAttribute("disabled") && !cmdInput.hasAttribute("disabled")) {
+    cmdInput.toggleAttribute("disabled");
+  }
+  else if (!cmd.hasAttribute("disabled") && cmdInput.getAttribute("placeholder") != "Executing...") {
+    cmdInput.removeAttribute("disabled");
+    cmdInput.focus();
+  }
+}
+
+/**
+ * @param {string} path 
+ */
+function getItemFromPath(path){
+  return path.replace(/\\+/g, "/").split("/").pop();
+}
+
+/**
+ * Unset a value from an array.
+ * @param {any[]} array 
+ * @param {number} index 
+ */
+function unsetArray(array, index) {
+  return array.splice(index, 1);
+}
+
+
+
+// Run at start
+setTimeout(async () => {
+  await runCMD("connect");
+  cmdlog(`Connected to `);
+  await runCMD("cd ../wl");
+}, 100);
+
+const funcs = {
 }
