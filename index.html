@@ -1,0 +1,17 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="X-UA-Compatible" content="ie=edge">
+    <script async src="./src/connection.js"></script>
+    <link rel="stylesheet" href="./src/style.css">
+    <title>SFTP</title>
+  </head>
+  <body>
+    <div id="cmd">
+      <div id="log"></div>
+      <div id="input"><input type="text" onkeydown="if(event.keyCode == 13) runCMD(this.value)"></div>
+    </div>
+  </body>
+</html>
