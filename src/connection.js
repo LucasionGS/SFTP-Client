@@ -192,18 +192,25 @@ function addDefaultCommands()
     try {
       var options = {
         root: false,
+        keep: false
       }
       // Check parameters
-      var t_args = args;
-      for (let i = 0; i < t_args.length; i++) {
-        const arg = t_args[i];
+
+      for (let i = 0; i < args.length; i++) {
+        const arg = args[i];
         if (arg.startsWith("-")) {
           if (arg == "-root") {
             options.root = true;
           }
+          if (arg == "-keep") {
+            options.keep = true;
+          }
           unsetArray(args, i);
+          i--;
         }
       }
+
+      console.log(args);
       
       var arch = archiver("zip");
       var localPath = args[1];
@@ -235,7 +242,9 @@ function addDefaultCommands()
         else {
           await runCMD('put "'+localPath+'.zip"');
         }
-        fs.unlinkSync(localPath+'.zip');
+        if (!options.keep) {
+          fs.unlinkSync(localPath+'.zip');
+        }
       });
     } catch (error) {
       logError(error);
