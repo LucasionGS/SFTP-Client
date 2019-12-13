@@ -1,6 +1,7 @@
 const fs = require("fs");
 const sftpClient = require("ssh2-sftp-client");
 const archiver = require("archiver");
+const {AutoComplete} = require("autocomplete");
 
 let sftp = new sftpClient();
 let cDirectory = "/home/wl";
@@ -12,21 +13,93 @@ let sftpData = {
   "password": "entotre4",
 };
 
+let ac = new AutoComplete(document.querySelector("div#input input"), [
+  // Command List autocompletion possible combos
+
+  // help
+  "help",
+
+  // connect
+  "connect",
+
+  // ls
+  "ls",
+
+  // clear
+  "clear",
+
+  // cd
+  "cd",
+  "cd ..",
+
+  // get
+  "get",
+  "get \"remote-path\" \"local-path\"",
+
+  // put
+  "put",
+  "put \"local-path\" \"remote-path\"",
+
+  // putzip
+  "putzip",
+  "putzip -root",
+  "putzip -keep",
+  "putzip -root -keep",
+  "putzip -keep -root",
+  "putzip \"local-path\"",
+  "putzip \"local-path\" \"remote-path\"",
+  "putzip -root \"local-path\"",
+  "putzip -keep \"local-path\"",
+  "putzip -root -keep \"local-path\"",
+  "putzip -keep -root \"local-path\"",
+  "putzip -root \"local-path\" \"remote-path\"",
+  "putzip -keep \"local-path\" \"remote-path\"",
+  "putzip -root -keep \"local-path\" \"remote-path\"",
+  "putzip -keep -root \"local-path\" \"remote-path\"",
+
+  // rm
+  "rm",
+  "rm -f",
+  "rm -d",
+  "rm -l",
+  "rm -f \"remote-path\"",
+  "rm -d \"remote-path\"",
+  "rm -l \"remote-path\"",
+  "rm \"remote-path\"",
+
+  // font
+  "font",
+  "font reset",
+  "font size",
+  "font size 20",
+]);
+
+ac.onlyFullText = true;
+
 class Command {
   /**
-   * 
+   * Construct a new command.
    * @param {string} command 
-   * @param {(command: string, args: string[], rest: string)} fn 
+   * @param {(this: Command, command: string, args: string[], rest: string)} fn 
    * @param {boolean} doNotAdd 
    */
-  constructor(command, fn, help = "", doNotAdd = false)
+  constructor(command, fn, help = "No help available for this command.", doNotAdd = false)
   {
     this.command = command;
     this.fn = fn;
+    this.help = help;
 
     if (!doNotAdd) {
       cmdList.push(this);
     }
+  }
+
+  /**
+   * Display the help text for this command.
+   */
+  getHelp()
+  {
+    return cmdlog(this.help+"<br>");
   }
 }
 
@@ -61,46 +134,89 @@ function addDefaultCommands()
     }
     cmdlog("Successfully connected to server.");
     return connection;
-  });
+  },
+    "Start up a connection to the server."
+  );
   
   // File list command
   new Command("ls", async function() {
     try {
       var files = await sftp.list(cDirectory);
       cmdlog(separator(true), false);
+      // Insert go back
+      cmdlog("..", false, async function() {
+        await runCMD("cd ..");
+        await runCMD("ls");
+      }, {"class": "dirEnt", "title": "Parent Directory"});
+
       for (let i = 0; i < files.length; i++) {
         const file = files[i];
         if (file.name.includes(" ")) {
           file.name = "\""+file.name+"\"";
         }
-        var color = "white";
+        var options = {};
+        var fn = async function() {
+          await runCMD("cd "+file.name);
+          await runCMD("ls");
+        }
         if (file.type == "d") {
-          color = "#4287f5";
+          // color = "#4287f5";
+          options.class = "dirEnt";
         }
         if (file.type == "-") {
-          color = "lightgrey";
+          // color = "lightgrey";
+          options.class = "fileEnt";
+          fn = function() {
+            var name = file.name;
+            if (name.startsWith("\"") && name.endsWith("\"")) {
+              name = name.substring(1, name.length-1);
+            }
+            if (!fs.existsSync("./_downloads/")) {
+              fs.mkdirSync("./_downloads/");
+            }
+            runCMD(`get "${name}" "./_downloads/${name}"`, false);
+          };
         }
         if (file.type == "l") {
-          color = "lightblue";
+          // color = "lightblue";
+          options.class = "linkEnt";
         }
-        cmdlog(file.name, color, function() {
-          console.log(file.name);
-        });
+
+        if (file.type == "-") {
+          var bData = bytesTo(file.size);
+          cmdlog(file.name + " - " + bData.size+" "+bData.type, false, fn, options);
+        }
+        else if (file.type == "d" || file.type == "l") {
+          cmdlog(file.name, false, fn, options);
+        }
       }
       if (files.length == 0) {
         logError("This folder is empty");
       }
+      // Insert go back at end as well
+      cmdlog("..", false, async function() {
+        await runCMD("cd ..");
+        await runCMD("ls");
+      }, {"class": "dirEnt", "title": "Parent Directory"});
+
       cmdlog(separator(true), false);
       return files;
     } catch (error) {
       logError(error);
       logError("Remember to do ``connect`` first.");
     }
-  });
+  },
+    "Displays a list of files and folders within the current directory.<br>"+
+    "Folders are blue, (symbolic links are a light blue)<br>"+
+    "Clicking folders will execute the ``cd`` command on that directory.<br<br>"+
+    "File are grey and display the size after the name.<br>"+
+    "Clicking files will download it into a folder ``/_downloads/`` in the apps directory."
+  );
 
   new Command("clear", function (){
     clearLog();
-  });
+    cmdlog(">>> Screen cleared.");
+  }, "Clears the screen from previous command execution text.");
 
   new Command("cd", async function(cmd, args) {
     try {
@@ -142,9 +258,11 @@ function addDefaultCommands()
       logError(error);
       return error;
     }
-  });
+  },
+    "cd [directory]<br>"+
+    "Sets and displays the current directory."
+  );
 
-  // get "/var/www/html/files/getFiles.php" ./file.php
   new Command("get", async function(cmd, args) {
     try {
       var fromData = await getPath(args[1]);
@@ -163,7 +281,10 @@ function addDefaultCommands()
     } catch (error) {
       logError(error);
     }
-  });
+  },
+    "get (remote-path) [local-path]<br>"+
+    "Downloads a remote file to the local system"
+  );
 
   new Command("put", async function(cmd, args) {
     try {
@@ -186,7 +307,10 @@ function addDefaultCommands()
     } catch (error) {
       logError(error);
     }
-  });
+  },
+    "put (local-path) [remote-path]<br>"+
+    "Uploads a local file to the remote system"
+  );
 
   new Command("putzip", async function(cmd, args) {
     try {
@@ -249,7 +373,12 @@ function addDefaultCommands()
     } catch (error) {
       logError(error);
     }
-  });
+  },
+    "putzip (local-path) [remote-path] [-keep, -root]<br>"+
+    "Zips and uploads a local file or directory to the remote system. The remote system will receive a .zip file<br>"+
+    "If you use the ``-keep`` argument when zipping any entry, the zipped file won't be deleted from your system after it has been uploaded, and will stay on your system as well."+
+    "If you use the ``-root`` argument when zipping a folder, the files in the folder will be put in the root of the zip file. Otherwise it will be stored in a subfolder.<br>"
+  );
 
   new Command("rm", async function(cmd, args) {
     try {
@@ -297,15 +426,72 @@ function addDefaultCommands()
     } catch (error) {
       logError(error);
     }
-  });
+  },
+    "rm (remote-path) [-d | -f | -l]<br>"+
+    "Removes a file or directory from the remote system.<br>"+
+    "If you use the ``-d`` argument, it will only attempt to remove directories.<br>"+
+    "If you use the ``-f`` argument, it will only attempt to remove files.<br>"+
+    "If you use the ``-l`` argument, it will only attempt to remove symbolic links."
+  );
+
+  new Command("font", function(cmd, args) {
+    if (args[1] == "reset") {
+      document.getElementById("log").style.fontSize = "";
+    }
+    else if (args[1] == "size" && !isNaN(args[2])) {
+      if (!(document.getElementById("log").style.fontSize = args[2]+"px")) {
+        logError("Couldn't set font size: Unknown Error");
+      }
+    }
+    else {
+      this.getHelp();
+    }
+  },
+    "font (size | reset) [IF size: Size - ``Integer`` ]<br>"+
+    "Changes the size of the log font."
+  );
+
+  new Command("help", function(cmd, args) {
+    if (args[1]) {
+      for (let i = 0; i < cmdList.length; i++) {
+        const cmdItem = cmdList[i];
+        if (cmdItem.command.toLowerCase() == args[1].toLowerCase()) {
+          return cmdItem.getHelp();
+        }
+      }
+    }
+    else {
+      const info = {};
+      for (let i = 0; i < cmdList.length; i++) {
+        const cmdItem = cmdList[i];
+        cmdlog(cmdItem.command+":");
+        info[cmdItem.command] = cmdItem.getHelp();
+      }
+      return info;
+    }
+  }, 
+    "help [command]<br>"+
+    "Displays a single or every commands help text."
+  );
 }
 
 /**
  * 
  * @param {string} command 
  */
-async function runCMD(command)
+async function runCMD(command, clickReset = true)
 {
+  // Reset clickables
+  if (clickReset) {
+    var _clickables = document.querySelectorAll("[clickable]");
+    for (let i = 0; i < _clickables.length; i++) {
+      const elm = _clickables[i];
+      elm.toggleAttribute("clickable", false);
+      elm.removeAttribute("onclick");
+      delete funcs[elm.id];
+    }
+  }
+
   lastCMD = command;
   const rgx = /[^\s"']+|"([^"]*)"|'([^']*)'/g;
   const log = document.querySelector("#log");
@@ -369,34 +555,42 @@ function separator(returnText = false){
  * @param {string} text
  * @param {boolean} breakLine
  * @param {Function|string|false} onclickFN
+ * @param {{"class":string, "title":string}} options
  */
-function cmdlog(text, color = "white", onclickFN = false){
+function cmdlog(text, color = "", onclickFN = false, options = {}){
   const log = document.querySelector("#log");
   var textToLog = markdown(text.toString())+"<br>";
   var id = generateRandomString("log_");
-  if (color != "") {
+  if (color != "" && color != false) {
     textToLog = "<div id=\""+id+"\" style=\"color:"+color+";\">"+textToLog+"</div>";
+  }
+  else {
+    textToLog = "<div id=\""+id+"\">"+textToLog+"</div>";
   }
   
   log.innerHTML += textToLog;
   scrollToBottom();
+  
+  var obj = document.getElementById(id);
+
+  // options
+  for (const key in options) {
+    if (options.hasOwnProperty(key)) {
+      const value = options[key];
+      obj.setAttribute(key, value);
+    }
+  }
 
   if (onclickFN) {
     funcs[id] = onclickFN;
-    var obj = document.getElementById(id);
     obj.toggleAttribute("clickable");
     if (typeof onclickFN == "function") {
       obj.setAttribute("onclick", "funcs[this.id]()");
-      console.log("Set as Function");
-      // console.log(obj);
     }
-    if (typeof onclickFN == "string") {
+    else if (typeof onclickFN == "string") {
       obj.setAttribute("onclick", onclickFN);
-      console.log("Set as string");
     }
   }
-  setTimeout(() => {
-  }, 0);
   return textToLog;
 }
 
@@ -406,7 +600,7 @@ function cmdlog(text, color = "white", onclickFN = false){
  */
 function generateRandomString(prefix = "")
 {
-  var symbols = ["a","b","c","d","e","f","g","h","i","j","k","l","m","n","o","p","q","r","s","t","u","v","x","w","z","A","B","C","D","E","F","G","H","I","J","K","L","M","N","O","P","Q","R","S","T","U","V","X","W","Z","1","2","3","4","5","6","7","8","9","0"];
+  var symbols = "abcdefghijklmnopqrstuvxwzABCDEFGHIJKLMNOPQRSTUVXWZ1234567890";
   var string = prefix;
   for (let i = 0; i < 10; i++) {
     string += symbols[randomInt(symbols.length-1)];
@@ -460,6 +654,9 @@ async function getPath(path)
   if (path.startsWith("/")) {
     dirToTest = path;
   }
+  else if (path.startsWith("~")) {
+    dirToTest = "/home/"+sftpData.username+"/"+path.substring(1);
+  }
   else {
     dirToTest = cDirectory+"/"+path;
   }
@@ -476,6 +673,9 @@ async function getPath(path)
 window.addEventListener("keydown", function(e) {
   if (e.ctrlKey && e.key.toLowerCase() == "t") {
     toggleCMD();
+  }
+  if (e.ctrlKey && e.altKey && e.key.toLowerCase() == "c") {
+    runCMD("clear");
   }
   if (e.key == "ArrowUp") {
     const cmdInput = document.querySelector("#input input");
@@ -519,7 +719,38 @@ function unsetArray(array, index) {
   return array.splice(index, 1);
 }
 
+/**
+ * 
+ * @param {number} bytes 
+ * @param {"auto"|"kb"|"mb"|"gb"} type 
+ */
+function bytesTo(bytes, type = "auto")
+{
+  if (type == "auto") {
+    if (bytes >= 1073741824) {
+      type = "gb";
+      bytes = bytes / 1073741824;
+    }
+    else if (bytes >= 1048576) {
+      type = "mb";
+      bytes = bytes / 1048576;
+    }
+    else if (bytes >= 1024) {
+      type = "kb";
+      bytes = bytes / 1024;
+    }
+    else {
+      type = "bytes";
+    }
+    return {
+      "size": Math.ceil(bytes),
+      "type": type
+    }
+  }
+}
 
+const funcs = {
+}
 
 // Run at start
 setTimeout(async () => {
@@ -528,5 +759,3 @@ setTimeout(async () => {
   await runCMD("cd ../wl");
 }, 100);
 
-const funcs = {
-}

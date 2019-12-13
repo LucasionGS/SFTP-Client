@@ -12,7 +12,7 @@ div#cmd{
   position: fixed;
   top: 0;
   right: 0;
-  width: 50%;
+  width: 75%;
   height: 100vh;
   transition: all 0.2s ease-in-out;
 }
@@ -56,4 +56,22 @@ div#input input{
   color: white;
   font-size: 26px;
   box-sizing: border-box;
+}
+
+.dirEnt{
+  color: #4287f5;
+}
+
+.fileEnt{
+  color: lightgrey;
+}
+
+.linkEnt{
+  color: lightblue;
+}
+
+[clickable]:hover{
+  color: #00af00;
+  cursor: pointer;
+  background-color: #303030;
 }
