@@ -72,6 +72,9 @@ let ac = new AutoComplete(document.querySelector("div#input input"), [
   "font reset",
   "font size",
   "font size 20",
+
+  // exit
+  "exit",
 ]);
 
 ac.onlyFullText = true;
@@ -80,14 +83,16 @@ class Command {
   /**
    * Construct a new command.
    * @param {string} command 
-   * @param {(this: Command, command: string, args: string[], rest: string)} fn 
+   * @param {(this: Command, command: string, args: string[], rest: string)} fn
+   * @param {boolean} async
    * @param {boolean} doNotAdd 
    */
-  constructor(command, fn, help = "No help available for this command.", doNotAdd = false)
+  constructor(command, fn, help = "No help available for this command.", async = false, doNotAdd = false)
   {
     this.command = command;
     this.fn = fn;
     this.help = help;
+    this.async = async;
 
     if (!doNotAdd) {
       cmdList.push(this);
@@ -283,7 +288,8 @@ function addDefaultCommands()
     }
   },
     "get (remote-path) [local-path]<br>"+
-    "Downloads a remote file to the local system"
+    "Downloads a remote file to the local system",
+    true
   );
 
   new Command("put", async function(cmd, args) {
@@ -309,7 +315,8 @@ function addDefaultCommands()
     }
   },
     "put (local-path) [remote-path]<br>"+
-    "Uploads a local file to the remote system"
+    "Uploads a local file to the remote system",
+    true
   );
 
   new Command("putzip", async function(cmd, args) {
@@ -333,8 +340,6 @@ function addDefaultCommands()
           i--;
         }
       }
-
-      console.log(args);
       
       var arch = archiver("zip");
       var localPath = args[1];
@@ -377,7 +382,8 @@ function addDefaultCommands()
     "putzip (local-path) [remote-path] [-keep, -root]<br>"+
     "Zips and uploads a local file or directory to the remote system. The remote system will receive a .zip file<br>"+
     "If you use the ``-keep`` argument when zipping any entry, the zipped file won't be deleted from your system after it has been uploaded, and will stay on your system as well."+
-    "If you use the ``-root`` argument when zipping a folder, the files in the folder will be put in the root of the zip file. Otherwise it will be stored in a subfolder.<br>"
+    "If you use the ``-root`` argument when zipping a folder, the files in the folder will be put in the root of the zip file. Otherwise it will be stored in a subfolder.<br>",
+    true
   );
 
   new Command("rm", async function(cmd, args) {
@@ -473,6 +479,15 @@ function addDefaultCommands()
     "help [command]<br>"+
     "Displays a single or every commands help text."
   );
+
+  new Command("exit", function() {
+    sftp.end();
+    cmdlog("Shutting down connection...");
+    sftp.on("end", function(){
+      cmdlog("Exited");
+      toggleCMD();
+    });
+  }, "Terminates the connection.");
 }
 
 /**
@@ -509,16 +524,22 @@ async function runCMD(command, clickReset = true)
 
   var command = args[0];
 
+  
   cmdInput.setAttribute("disabled", true);
   cmdInput.value = "";
-
+  
   cmdlog("<span style=\"color: green;\">&gt; </span> "+fullCommand);
-
+  
   for (let i = 0; i < cmdList.length; i++) {
     const cmd = cmdList[i];
     if (cmd.command == command) {
       cmdInput.setAttribute("placeholder", "Executing...");
-      var returnValue = await cmd.fn(command, args, rest);
+      /**
+       * @type {Promise<any>}
+       */
+      var returnValue;
+      if(cmd.async) {returnValue = cmd.fn(command, args, rest);}
+      else {returnValue = await cmd.fn(command, args, rest);}
       cmdInput.removeAttribute("disabled");
       cmdInput.removeAttribute("placeholder");
       cmdInput.focus();
