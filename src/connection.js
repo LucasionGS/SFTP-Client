@@ -1,7 +1,7 @@
 const fs = require("fs");
 const sftpClient = require("ssh2-sftp-client");
 const archiver = require("archiver");
-const {AutoComplete} = require("autocomplete");
+const {AutoComplete} = require("ion-ezautocomplete");
 
 let sftp = new sftpClient();
 let cDirectory = "/home/wl";
@@ -24,21 +24,27 @@ let ac = new AutoComplete(document.querySelector("div#input input"), [
 
   // ls
   "ls",
+  "list",
 
   // clear
   "clear",
 
   // cd
   "cd",
+  "cd ~",
   "cd ..",
 
   // get
   "get",
   "get \"remote-path\" \"local-path\"",
+  "download",
+  "download \"remote-path\" \"local-path\"",
 
   // put
   "put",
   "put \"local-path\" \"remote-path\"",
+  "upload",
+  "upload \"local-path\" \"remote-path\"",
 
   // putzip
   "putzip",
@@ -56,7 +62,22 @@ let ac = new AutoComplete(document.querySelector("div#input input"), [
   "putzip -keep \"local-path\" \"remote-path\"",
   "putzip -root -keep \"local-path\" \"remote-path\"",
   "putzip -keep -root \"local-path\" \"remote-path\"",
-
+  "uploadzip",
+  "uploadzip -root",
+  "uploadzip -keep",
+  "uploadzip -root -keep",
+  "uploadzip -keep -root",
+  "uploadzip \"local-path\"",
+  "uploadzip \"local-path\" \"remote-path\"",
+  "uploadzip -root \"local-path\"",
+  "uploadzip -keep \"local-path\"",
+  "uploadzip -root -keep \"local-path\"",
+  "uploadzip -keep -root \"local-path\"",
+  "uploadzip -root \"local-path\" \"remote-path\"",
+  "uploadzip -keep \"local-path\" \"remote-path\"",
+  "uploadzip -root -keep \"local-path\" \"remote-path\"",
+  "uploadzip -keep -root \"local-path\" \"remote-path\"",
+  
   // rm
   "rm",
   "rm -f",
@@ -66,7 +87,23 @@ let ac = new AutoComplete(document.querySelector("div#input input"), [
   "rm -d \"remote-path\"",
   "rm -l \"remote-path\"",
   "rm \"remote-path\"",
-
+  "delete",
+  "delete -f",
+  "delete -d",
+  "delete -l",
+  "delete -f \"remote-path\"",
+  "delete -d \"remote-path\"",
+  "delete -l \"remote-path\"",
+  "delete \"remote-path\"",
+  "remove",
+  "remove -f",
+  "remove -d",
+  "remove -l",
+  "remove -f \"remote-path\"",
+  "remove -d \"remote-path\"",
+  "remove -l \"remote-path\"",
+  "remove \"remote-path\"",
+  
   // font
   "font",
   "font reset",
@@ -82,7 +119,7 @@ ac.onlyFullText = true;
 class Command {
   /**
    * Construct a new command.
-   * @param {string} command 
+   * @param {string|string[]} command 
    * @param {(this: Command, command: string, args: string[], rest: string)} fn
    * @param {boolean} async
    * @param {boolean} doNotAdd 
@@ -90,6 +127,12 @@ class Command {
   constructor(command, fn, help = "No help available for this command.", async = false, doNotAdd = false)
   {
     this.command = command;
+    if (typeof command == "object") {
+      this.multi = true;
+    }
+    else {
+      this.multi = false;
+    }
     this.fn = fn;
     this.help = help;
     this.async = async;
@@ -144,18 +187,28 @@ function addDefaultCommands()
   );
   
   // File list command
-  new Command("ls", async function() {
+  new Command(["ls", "list"], async function(cmd, args, rest) {
     try {
       var files = await sftp.list(cDirectory);
       cmdlog(separator(true), false);
+      // Sort array alphabetically
+      files.sort((a, b) => {
+        return a.name.charCodeAt(0) - b.name.charCodeAt(0);
+      });
       // Insert go back
       cmdlog("..", false, async function() {
         await runCMD("cd ..");
         await runCMD("ls");
       }, {"class": "dirEnt", "title": "Parent Directory"});
-
       for (let i = 0; i < files.length; i++) {
         const file = files[i];
+        var flags = "";
+        if (args[2]) {
+          flags = args[2];
+        }
+        if (args[1] && !(new RegExp(args[1], flags).test(file.name))) {
+          continue;
+        }
         if (file.name.includes(" ")) {
           file.name = "\""+file.name+"\"";
         }
@@ -167,10 +220,18 @@ function addDefaultCommands()
         if (file.type == "d") {
           // color = "#4287f5";
           options.class = "dirEnt";
+          var dirName = cDirectory+"/"+file.name;
+          if (!ac.completions.includes("cd "+dirName+"/")) {
+            ac.completions.push("cd "+dirName+"/");
+          }
         }
         if (file.type == "-") {
           // color = "lightgrey";
           options.class = "fileEnt";
+          var fileName = cDirectory+"/"+file.name;
+          if (!ac.completions.includes("get \""+fileName+"\"")) {
+            ac.completions.push("get \""+fileName+"\"");
+          }
           fn = function() {
             var name = file.name;
             if (name.startsWith("\"") && name.endsWith("\"")) {
@@ -185,6 +246,10 @@ function addDefaultCommands()
         if (file.type == "l") {
           // color = "lightblue";
           options.class = "linkEnt";
+          var dirName = cDirectory+"/"+file.name;
+          if (!ac.completions.includes("cd "+dirName+"/")) {
+            ac.completions.push("cd "+dirName+"/");
+          }
         }
 
         if (file.type == "-") {
@@ -211,7 +276,9 @@ function addDefaultCommands()
       logError("Remember to do ``connect`` first.");
     }
   },
+    "ls [RegExp] [flags]<br>"+
     "Displays a list of files and folders within the current directory.<br>"+
+    "If you insert a Regular expression after the command, it will search for entries matching it.<br>"+
     "Folders are blue, (symbolic links are a light blue)<br>"+
     "Clicking folders will execute the ``cd`` command on that directory.<br<br>"+
     "File are grey and display the size after the name.<br>"+
@@ -268,7 +335,7 @@ function addDefaultCommands()
     "Sets and displays the current directory."
   );
 
-  new Command("get", async function(cmd, args) {
+  new Command(["get", "download"], async function(cmd, args) {
     try {
       var fromData = await getPath(args[1]);
       var from = fromData.path;
@@ -292,7 +359,7 @@ function addDefaultCommands()
     true
   );
 
-  new Command("put", async function(cmd, args) {
+  new Command(["put", "upload"], async function(cmd, args) {
     try {
       fs.accessSync(args[1]);
       var from = args[1].replace(/\\+/g, "/");
@@ -319,7 +386,7 @@ function addDefaultCommands()
     true
   );
 
-  new Command("putzip", async function(cmd, args) {
+  new Command(["putzip", "uploadzip"], async function(cmd, args) {
     try {
       var options = {
         root: false,
@@ -386,7 +453,7 @@ function addDefaultCommands()
     true
   );
 
-  new Command("rm", async function(cmd, args) {
+  new Command(["rm", "delete", "remove"], async function(cmd, args) {
     try {
       var options = {
         type: false,
@@ -461,7 +528,16 @@ function addDefaultCommands()
     if (args[1]) {
       for (let i = 0; i < cmdList.length; i++) {
         const cmdItem = cmdList[i];
-        if (cmdItem.command.toLowerCase() == args[1].toLowerCase()) {
+        if (cmdItem.multi)
+        {
+          for (let i2 = 0; i2 < cmdItem.command.length; i2++) {
+            const _cmd = cmdItem.command[i2];
+            if (_cmd.toLowerCase() == args[1].toLowerCase()) {
+              return cmdItem.getHelp();
+            }
+          }
+        }
+        else if (cmdItem.command.toLowerCase() == args[1].toLowerCase()) {
           return cmdItem.getHelp();
         }
       }
@@ -470,8 +546,12 @@ function addDefaultCommands()
       const info = {};
       for (let i = 0; i < cmdList.length; i++) {
         const cmdItem = cmdList[i];
-        cmdlog(cmdItem.command+":");
-        info[cmdItem.command] = cmdItem.getHelp();
+        var displayName = cmdItem.command;
+        if (cmdItem.multi) {
+          displayName = displayName.join(" | ");
+        }
+        cmdlog(displayName+":");
+        info[displayName] = cmdItem.getHelp();
       }
       return info;
     }
@@ -488,6 +568,20 @@ function addDefaultCommands()
       toggleCMD();
     });
   }, "Terminates the connection.");
+}
+
+// Add each command to a help autocomplete.
+for (let i = 0; i < cmdList.length; i++) {
+  const cmdElm = cmdList[i];
+  if (cmdElm.multi) {
+    for (let i2 = 0; i2 < cmdElm.command.length; i2++) {
+      const cmdString = cmdElm.command[i2];
+      ac.completions.push("help "+cmdString);
+    }
+  }
+  else {
+    ac.completions.push("help "+cmdElm.command);
+  }
 }
 
 /**
@@ -532,7 +626,17 @@ async function runCMD(command, clickReset = true)
   
   for (let i = 0; i < cmdList.length; i++) {
     const cmd = cmdList[i];
-    if (cmd.command == command) {
+    var testCommand = cmd.command;
+    if (cmd.multi) {
+      for (let i2 = 0; i2 < testCommand.length; i2++) {
+        var possibleTestCommand = testCommand[i2];
+        if (possibleTestCommand == command) {
+          testCommand = testCommand[i2];
+          break;
+        }
+      }
+    }
+    if (testCommand == command) {
       cmdInput.setAttribute("placeholder", "Executing...");
       /**
        * @type {Promise<any>}
@@ -696,7 +800,7 @@ window.addEventListener("keydown", function(e) {
     toggleCMD();
   }
   if (e.ctrlKey && e.altKey && e.key.toLowerCase() == "c") {
-    runCMD("clear");
+    clearLog();
   }
   if (e.key == "ArrowUp") {
     const cmdInput = document.querySelector("#input input");
@@ -775,6 +879,7 @@ const funcs = {
 
 // Run at start
 setTimeout(async () => {
+  clearLog();
   await runCMD("connect");
   cmdlog(`Connected to `);
   await runCMD("cd ../wl");
