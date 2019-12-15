@@ -2,6 +2,7 @@ const fs = require("fs");
 const sftpClient = require("ssh2-sftp-client");
 const archiver = require("archiver");
 const {AutoComplete} = require("ion-ezautocomplete");
+const {Popup} = require("ion-notification");
 
 let sftp = new sftpClient();
 let cDirectory = "/home/wl";
@@ -113,8 +114,27 @@ let ac = new AutoComplete(document.querySelector("div#input input"), [
   // exit
   "exit",
 ]);
-
 ac.onlyFullText = true;
+
+Popup.addStyle();
+new Popup("Test title that is a lot longer than the previous and can maybe go to a new line",
+[
+  "Insert your name",
+  function() {
+    var node = document.createElement("input");
+    node.placeholder = "Lol";
+    return node; 
+  },
+  "Do you want to submit?",
+  function() {
+    var node = document.createElement("input");
+    node.type = "submit";
+    node.onclick = function() {
+      Popup.closeFromSubElement(this);
+    }
+    return node; 
+  }
+]);
 
 class Command {
   /**
@@ -524,7 +544,7 @@ function addDefaultCommands()
     "Changes the size of the log font."
   );
 
-  new Command("help", function(cmd, args) {
+  new Command(["help", "?"], function(cmd, args) {
     if (args[1]) {
       for (let i = 0; i < cmdList.length; i++) {
         const cmdItem = cmdList[i];
@@ -577,10 +597,12 @@ for (let i = 0; i < cmdList.length; i++) {
     for (let i2 = 0; i2 < cmdElm.command.length; i2++) {
       const cmdString = cmdElm.command[i2];
       ac.completions.push("help "+cmdString);
+      ac.completions.push("? "+cmdString);
     }
   }
   else {
     ac.completions.push("help "+cmdElm.command);
+    ac.completions.push("? "+cmdElm.command);
   }
 }
 
