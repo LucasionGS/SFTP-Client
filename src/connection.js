@@ -2,7 +2,7 @@ const fs = require("fs");
 const sftpClient = require("ssh2-sftp-client");
 const archiver = require("archiver");
 const {AutoComplete} = require("ion-ezautocomplete");
-const {Popup} = require("ion-notification");
+const {ContextMenu} = require("ionlib");
 
 let sftp = new sftpClient();
 let cDirectory = "/home/wl";
@@ -115,26 +115,6 @@ let ac = new AutoComplete(document.querySelector("div#input input"), [
   "exit",
 ]);
 ac.onlyFullText = true;
-
-Popup.addStyle();
-new Popup("Test title that is a lot longer than the previous and can maybe go to a new line",
-[
-  "Insert your name",
-  function() {
-    var node = document.createElement("input");
-    node.placeholder = "Lol";
-    return node; 
-  },
-  "Do you want to submit?",
-  function() {
-    var node = document.createElement("input");
-    node.type = "submit";
-    node.onclick = function() {
-      Popup.closeFromSubElement(this);
-    }
-    return node; 
-  }
-]);
 
 class Command {
   /**
@@ -274,7 +254,8 @@ function addDefaultCommands()
 
         if (file.type == "-") {
           var bData = bytesTo(file.size);
-          cmdlog(file.name + " - " + bData.size+" "+bData.type, false, fn, options);
+          var _id = cmdlog(file.name + " - " + bData.size+" "+bData.type, false, fn, options);
+          fileCM.attachContextMenu(document.getElementById(_id));
         }
         else if (file.type == "d" || file.type == "l") {
           cmdlog(file.name, false, fn, options);
@@ -738,7 +719,7 @@ function cmdlog(text, color = "", onclickFN = false, options = {}){
       obj.setAttribute("onclick", onclickFN);
     }
   }
-  return textToLog;
+  return id;
 }
 
 /**
@@ -896,6 +877,9 @@ function bytesTo(bytes, type = "auto")
   }
 }
 
+/**
+ * @type {{ string: () => void }}
+ */
 const funcs = {
 }
 
