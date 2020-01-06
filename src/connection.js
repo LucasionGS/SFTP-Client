@@ -14,6 +14,10 @@ let sftpData = {
   "password": "entotre4",
 };
 
+/**
+ * @type {HTMLInputElement}
+ */
+let g_cmdInput = document.querySelector("div#input input");
 let ac = new AutoComplete(document.querySelector("div#input input"), [
   // Command List autocompletion possible combos
 
@@ -113,29 +117,154 @@ let ac = new AutoComplete(document.querySelector("div#input input"), [
 
   // exit
   "exit",
+
+  // autocompletes
+  "autocompletes",
+
+  // restart
+  "restart",
+  "reload",
 ]);
 ac.onlyFullText = true;
+
+let fileCM = new ContextMenu([
+  {
+    "name": "File action"
+  },
+  {
+    "name": "Download file",
+    "click": (ev, ref, btn) => {
+      funcs[ref.id]();
+    }
+  },
+  {
+    "name": "Download file as...",
+    "click": (ev, ref, btn) => {
+      var _newfilename = ref.getAttribute("filename");
+      var _oldfilename = ref.getAttribute("filename");
+      if (_oldfilename.includes(" ")) {
+        _oldfilename = "\""+_oldfilename+"\"";
+      }
+      
+      if (_newfilename.startsWith("\"") && _newfilename.endsWith("\"")) {
+        _newfilename = _newfilename.substring(1, _newfilename.length-1);
+      }
+      g_cmdInput.value = "get "+_oldfilename+" \"_downloads/"+_newfilename+"\"";
+      g_cmdInput.focus();
+      g_cmdInput.setSelectionRange(("get "+_oldfilename+" \"_downloads/").length, ("get "+_oldfilename+" \"_downloads/"+_newfilename+"").length);
+    }
+  },
+  {
+    "name": "Remove file",
+    "click": (ev, ref, btn) => {
+      var _filename = ref.getAttribute("filename");
+      
+      if (_filename.startsWith("\"") && _filename.endsWith("\"")) {
+        _filename = _filename.substring(1, _filename.length-1);
+      }
+      if (_filename.includes(" ")) {
+        _filename = "\""+_filename+"\"";
+      }
+
+      cmdlog("Are you sure you want to delete "+_filename+"? This cannot be undone.");
+      cmdlog("I'm sure", "green", () => {
+        runCMD("rm -f "+_filename);
+        resetClickables();
+      });
+      cmdlog("No, nevermind actually", "red", () => {
+        cmdlog("Keeping file.");
+        resetClickables();
+      });
+    }
+  },
+]);
+
+let directoryCM = new ContextMenu([
+  {
+    "name": "Directory action"
+  },
+  {
+    "name": "Remove directory",
+    "click": (ev, ref, btn) => {
+      var _filename = ref.getAttribute("filename");
+      
+      if (_filename.startsWith("\"") && _filename.endsWith("\"")) {
+        _filename = _filename.substring(1, _filename.length-1);
+      }
+      if (_filename.includes(" ")) {
+        _filename = "\""+_filename+"\"";
+      }
+
+      cmdlog("Are you sure you want to delete "+_filename+"? This cannot be undone.");
+      cmdlog("I'm sure", "green", () => {
+        runCMD("rm "+_filename);
+        resetClickables();
+      });
+      cmdlog("No, nevermind actually", "red", () => {
+        cmdlog("Keeping directory.");
+        resetClickables();
+      });
+    }
+  },
+  {
+    "name": "Remove directory (Recursively)",
+    "click": (ev, ref, btn) => {
+      var _filename = ref.getAttribute("filename");
+      
+      if (_filename.startsWith("\"") && _filename.endsWith("\"")) {
+        _filename = _filename.substring(1, _filename.length-1);
+      }
+      if (_filename.includes(" ")) {
+        _filename = "\""+_filename+"\"";
+      }
+
+      cmdlog("Are you sure you want to delete "+_filename+"? This cannot be undone.");
+      cmdlog("I'm sure", "green", () => {
+        runCMD("rm -R "+_filename);
+        resetClickables();
+      });
+      cmdlog("No, nevermind actually", "red", () => {
+        cmdlog("Keeping directory.");
+        resetClickables();
+      });
+    }
+  },
+]);
 
 class Command {
   /**
    * Construct a new command.
-   * @param {string|string[]} command 
-   * @param {(this: Command, command: string, args: string[], rest: string)} fn
-   * @param {boolean} async
-   * @param {boolean} doNotAdd 
+   * @param {string|string[]} command The executable name/names for this command.
+   * @param {(this: Command, command: string, args: string[], rest: string)} fn The function that will run when this command is executed.
+   * @param {boolean} help The help text that will display when the user executes the `help` command with this command.
+   * @param {boolean} _async If the software should allow new incoming commands while this command is running. (Default `false`)
+   * @param {boolean} doNotAdd Set to true if you don't want this command added automatically to the list of commands. (Default `false`)
    */
-  constructor(command, fn, help = "No help available for this command.", async = false, doNotAdd = false)
+  constructor(command, fn, help = "No help available for this command.", _async = false, doNotAdd = false)
   {
     this.command = command;
+    /**
+     * Tells whether or not this command has multiple executable names.
+     * @type {boolean} 
+     */
+    this.multi = false;
     if (typeof command == "object") {
       this.multi = true;
     }
     else {
-      this.multi = false;
     }
+    /**
+     * The function that will run when this command is executed.
+     */
     this.fn = fn;
+    /**
+     * The help text that will display when the user executes the `help` command with this command.
+     */
     this.help = help;
-    this.async = async;
+    /**
+     * If the software should allow new incoming commands while this command is running. (Default `false`)
+     */
+    this.async = _async;
 
     if (!doNotAdd) {
       cmdList.push(this);
@@ -212,13 +341,21 @@ function addDefaultCommands()
         if (file.name.includes(" ")) {
           file.name = "\""+file.name+"\"";
         }
-        var options = {};
+        var filenameOption = file.name;
+        if (filenameOption.startsWith("\"") && filenameOption.endsWith("\"")) {
+          filenameOption = filenameOption.substring(1, filenameOption.length-1);
+        }
+        var options = {
+          "filename": filenameOption
+        };
+
         var fn = async function() {
           await runCMD("cd "+file.name);
           await runCMD("ls");
         }
         if (file.type == "d") {
           // color = "#4287f5";
+          options.oncontextmenu = "directoryCM.show(this);";
           options.class = "dirEnt";
           var dirName = cDirectory+"/"+file.name;
           if (!ac.completions.includes("cd "+dirName+"/")) {
@@ -245,6 +382,7 @@ function addDefaultCommands()
         }
         if (file.type == "l") {
           // color = "lightblue";
+          options.oncontextmenu = "directoryCM.show(this);";
           options.class = "linkEnt";
           var dirName = cDirectory+"/"+file.name;
           if (!ac.completions.includes("cd "+dirName+"/")) {
@@ -254,8 +392,8 @@ function addDefaultCommands()
 
         if (file.type == "-") {
           var bData = bytesTo(file.size);
+          options.oncontextmenu = "fileCM.show(this);";
           var _id = cmdlog(file.name + " - " + bData.size+" "+bData.type, false, fn, options);
-          fileCM.attachContextMenu(document.getElementById(_id));
         }
         else if (file.type == "d" || file.type == "l") {
           cmdlog(file.name, false, fn, options);
@@ -274,7 +412,7 @@ function addDefaultCommands()
       return files;
     } catch (error) {
       logError(error);
-      logError("Remember to do ``connect`` first.");
+      // logError("Remember to do ``connect`` first.");
     }
   },
     "ls [RegExp] [flags]<br>"+
@@ -458,6 +596,7 @@ function addDefaultCommands()
     try {
       var options = {
         type: false,
+        recursive: false
       }
       // Check parameters
       var t_args = args;
@@ -473,6 +612,10 @@ function addDefaultCommands()
           else if (arg == "-l") {
             options.type = "l";
           }
+
+          if (arg == "-R") {
+            options.recursive = true;
+          }
           unsetArray(args, i);
         }
       }
@@ -485,17 +628,41 @@ function addDefaultCommands()
       else {
         if (options.type != false) {
           if (options.type == file.type) {
-            var msg = await sftp.delete(file.path);
-            cmdlog(msg, "#00ff15");
+            if (file.type == "-") {
+              var msg = await sftp.delete(file.path);
+              cmdlog(msg, "#00ff15");
+            }
+            else {
+              try{
+                var msg = await sftp.rmdir(file.path, options.recursive);
+                cmdlog(msg, "#00ff15");
+              }
+              catch {
+                logError("Cannot remove directory. Perhaps try to use the parameter \"-R\" for recursive removable. This will remove all files inside the folder if it has any.");
+              }
+            }
           }
           else {
             logError(`"${file.path}" was of the wrong type "${file.type}", only accepting "${options.type}" with current parameters.`);
           }
           return;
         }
-          var msg = await sftp.delete(file.path);
-          cmdlog(msg, "#00ff15");
+        else{
+          try{
+            var msg = await sftp.delete(file.path);
+            cmdlog(msg, "#00ff15");
+          }
+          catch {
+            try{
+              var msg = await sftp.rmdir(file.path, options.recursive);
+              cmdlog(msg, "#00ff15");
+            }
+            catch {
+              logError("Cannot remove directory. Perhaps try to use the parameter \"-R\" for recursive removable. This will remove all files inside the folder if it has any.");
+            }
+          }
           return;
+        }
       }
     } catch (error) {
       logError(error);
@@ -569,7 +736,37 @@ function addDefaultCommands()
       toggleCMD();
     });
   }, "Terminates the connection.");
+
+  new Command("autocompletes", function() {
+    for (let i = 0; i < ac.completions.length; i++) {
+      const _ac = ac.completions[i];
+      cmdlog(_ac, "white", () => {
+        document.querySelector("div#input input").value = _ac;
+        document.querySelector("div#input input").focus();
+      });
+    }
+  }, "Displays all the current available autocompletions.");
+
+  new Command(["restart", "reload"], function() {
+    location.reload();
+  },
+  "Restarts the software.");
 }
+
+// Add every raw command automatically to autocomplete.
+// for (let i = 0; i < cmdList.length; i++) {
+//   const cmdElm = cmdList[i];
+//   var toCheck = "";
+//   if (!cmdElm.multi) {
+//     toCheck = ac.completions.findIndex(cmdElm.command);
+//   }
+//   else {
+//     toCheck = ac.completions.findIndex(cmdElm.command[0]);
+//   }
+//   if (ac.completions.findIndex(toCheck) == -1) {
+//     ac.completions.push(toCheck);
+//   }
+// }
 
 // Add each command to a help autocomplete.
 for (let i = 0; i < cmdList.length; i++) {
@@ -588,6 +785,20 @@ for (let i = 0; i < cmdList.length; i++) {
 }
 
 /**
+ * Makes the currently clickable text unclickable.
+ */
+function resetClickables()
+{
+  var _clickables = document.querySelectorAll("[clickable]");
+  for (let i = 0; i < _clickables.length; i++) {
+    const elm = _clickables[i];
+    elm.toggleAttribute("clickable", false);
+    elm.removeAttribute("onclick");
+    delete funcs[elm.id];
+  }
+}
+
+/**
  * 
  * @param {string} command 
  */
@@ -595,13 +806,7 @@ async function runCMD(command, clickReset = true)
 {
   // Reset clickables
   if (clickReset) {
-    var _clickables = document.querySelectorAll("[clickable]");
-    for (let i = 0; i < _clickables.length; i++) {
-      const elm = _clickables[i];
-      elm.toggleAttribute("clickable", false);
-      elm.removeAttribute("onclick");
-      delete funcs[elm.id];
-    }
+    resetClickables();
   }
 
   lastCMD = command;
@@ -682,7 +887,7 @@ function separator(returnText = false){
  * Log to CMD log
  * @param {string} text
  * @param {boolean} breakLine
- * @param {Function|string|false} onclickFN
+ * @param {() => void |string|false} onclickFN
  * @param {{"class":string, "title":string}} options
  */
 function cmdlog(text, color = "", onclickFN = false, options = {}){
@@ -768,6 +973,7 @@ function markdown(text)
  * @param {string} text Text to show
  */
 function logError(text) {
+  console.error(text);
   cmdlog(text, color = "red");
 }
 
