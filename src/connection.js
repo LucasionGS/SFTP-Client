@@ -5,13 +5,34 @@ const {AutoComplete} = require("ion-ezautocomplete");
 const {ContextMenu} = require("ionlib");
 
 let sftp = new sftpClient();
-let cDirectory = "/home/wl";
+let cDirectory = "";
 let lastCMD = "";
+/**
+ * SFTP Credentials.
+ * @type {{"host": string,"port": string,"username": string,"password": string}}
+ */
 let sftpData = {
-  "host": "128.76.244.245",
-  "port": "22",
-  "username": "pi",
-  "password": "entotre4",
+  "host": "",
+  "port": 22,
+  "username": "",
+  "password": ""
+};
+
+let default_sftpData = {
+  "host": "",
+  "port": 22,
+  "username": "",
+  "password": ""
+};
+
+/**
+ * @type {default_sftpData}
+ */
+let tmp_newSftp = {
+  "host": "",
+  "port": 22,
+  "username": "",
+  "password": ""
 };
 
 /**
@@ -292,10 +313,93 @@ addDefaultCommands();
  */
 function addDefaultCommands()
 {
+  // New Connection config
+  new Command("createconnection", function() {
+    tmp_newSftp.host = "";
+    tmp_newSftp.port = 22;
+    tmp_newSftp.username = "";
+    tmp_newSftp.password = "";
+    ac.enabled = false;
+    cmdlog("Enter a host:");
+    new InputListener((command, args, rest) => {
+      var full = args.join(" ");
+      tmp_newSftp.host = full;
+      cmdlog(full);
+
+      cmdlog("Enter a username:");
+      new InputListener((command, args, rest) => {
+        var full = args.join(" ");
+        tmp_newSftp.username = full;
+        cmdlog(full);
+
+        cmdlog("Enter a password:");
+        document.querySelector("#input input").setAttribute("type", "password");
+        new InputListener((command, args, rest) => {
+          var full = args.join(" ");
+          tmp_newSftp.password = full;
+          // cmdlog(full);
+
+          cmdlog("Enter a port: (This is normally 22)");
+          document.querySelector("#input input").setAttribute("type", "text");
+          new InputListener((command, args, rest) => {
+            var full = args.join(" ");
+            tmp_newSftp.port = full;
+            cmdlog(full);
+
+            cmdlog("Enter a name for the config:");
+            new InputListener((command, args, rest) => {
+              var full = args.join("_");
+              fs.writeFileSync("./"+full+".sftp.json", JSON.stringify(tmp_newSftp));
+              cmdlog("Created a new config as " + full);
+              ac.enabled = true;
+
+              InputListener.stop();
+            });
+          });
+        });
+      });
+    });
+  }, "Prompts for the creation of a new ``connect`` config.");
+
   // Connect command
-  new Command("connect", async function() {
+  new Command("connect", async function(command, args) {
+    if (args[1]) {
+      try {
+        sftpData = JSON.parse(fs.readFileSync(args[1]+".sftp.json"));
+      } catch (error) {
+        logError(error);
+        return;
+      }
+    }
+    else {
+      try {
+        sftpData = JSON.parse(fs.readFileSync("./default.sftp.json"));
+      } catch (error) {
+        logError("Cannot parse or cannot find a ``default.sftp.json`` file.");
+        cmdlog("Create a default config file by using the command ``createconnection`` and naming it ``default``");
+        cmdlog("Click here to create a config.", "green", () => {
+          runCMD("createconnection");
+        });
+        
+      }
+    }
+    // Fixing any unfilled port.
+    if (!sftpData.host) {
+      sftpData.host = "127.0.0.1";
+    }
+    if (!sftpData.port) {
+      sftpData.port = 22;
+    }
+    if (!sftpData.username) {
+      sftpData.username = "root";
+    }
+    if (!sftpData.password) {
+      sftpData.password = "";
+    }
+
     let connection;
     try {
+      cmdlog("Connecting to "+sftpData.username+"@"+sftpData.host+":"+sftpData.port+"...");
       connection = await sftp.connect(sftpData).then(async function() {
         cDirectory = await sftp.cwd();
       });
@@ -305,14 +409,16 @@ function addDefaultCommands()
       await sftp.end();
       sftp.on("end", async function(){
         cmdlog("Disconnected from Server");
-        runCMD("connect");
+        runCMD(args.join(" "));
       });
       return error;
     }
-    cmdlog("Successfully connected to server.");
+    cmdlog("<span style=\"color: green;\">"+sftpData.username+"@"+sftpData.host+"</span>:<span style=\"color: blue;\">"+cDirectory+" $</span> Successfully connected to server.");
     return connection;
   },
-    "Start up a connection to the server."
+    "connect [config_name]<br>"+
+    "Start up a connection to a server.<br>"+
+    "If a config named ``default`` is present, it'll be used as the startup connection."
   );
   
   // File list command
@@ -620,6 +726,35 @@ function addDefaultCommands()
         }
       }
 
+      if (args[1] && args[1] == "*") {
+        var files = await sftp.list(cDirectory);
+        var dashArgs = [];
+        if (options.recursive) {
+          dashArgs.push("-R");
+        }
+
+        if (options.type == "d") {
+          dashArgs.push("-d");
+        }
+        else if (options.type == "-") {
+          dashArgs.push("-f");
+        }
+        else if (options.type == "l") {
+          dashArgs.push("-l");
+        }
+
+        for (let i = 0; i < files.length; i++) {
+          const file = files[i];
+
+          if (options.type && file.type != options.type) {
+            continue;
+          }
+          await runCMD("rm "+dashArgs.join(" ")+" \""+file.name+"\"");
+        }
+
+        return;
+      }
+
       var file = await getPath(args[1]);
       if (!file.type) {
         logError(`"${file.path}" does not exist.`);
@@ -628,7 +763,7 @@ function addDefaultCommands()
       else {
         if (options.type != false) {
           if (options.type == file.type) {
-            if (file.type == "-") {
+            if (file.type == "-" || file.type == "l") {
               var msg = await sftp.delete(file.path);
               cmdlog(msg, "#00ff15");
             }
@@ -672,7 +807,8 @@ function addDefaultCommands()
     "Removes a file or directory from the remote system.<br>"+
     "If you use the ``-d`` argument, it will only attempt to remove directories.<br>"+
     "If you use the ``-f`` argument, it will only attempt to remove files.<br>"+
-    "If you use the ``-l`` argument, it will only attempt to remove symbolic links."
+    "If you use the ``-l`` argument, it will only attempt to remove symbolic links.<br>"+
+    "Using a ``*`` as the file to remove, will remove every entry in the current folder. (The parameters above also work with this)"
   );
 
   new Command("font", function(cmd, args) {
@@ -733,6 +869,7 @@ function addDefaultCommands()
     cmdlog("Shutting down connection...");
     sftp.on("end", function(){
       cmdlog("Exited");
+      sftpData = default_sftpData;
       toggleCMD();
     });
   }, "Terminates the connection.");
@@ -751,22 +888,59 @@ function addDefaultCommands()
     location.reload();
   },
   "Restarts the software.");
+
+  new Command("mkdir", async function(command, args) {
+    try {
+      if (args.length == 1) {
+        this.getHelp();
+      }
+      else if (args.length > 1) {
+        var options = {
+          recursive: false
+        }
+        // Check parameters
+        var t_args = args;
+        for (let i = 0; i < t_args.length; i++) {
+          const arg = t_args[i];
+          if (arg.startsWith("-") && arg.length == 2) {
+            if (arg == "-R") {
+              options.recursive = true;
+            }
+            unsetArray(args, i);
+          }
+        }
+        if (args[1]) {
+          cmdlog(await sftp.mkdir((await getPath(args[1])).path, options.recursive));
+        }
+        else {
+          this.getHelp();
+        }
+      }
+    }
+    catch (error) {
+      logError(error);
+    }
+  },
+  "mkdir (directory_name) [-R]<br>"+
+  "Creates a new directory on the remote machine.<br>"+
+  "``-R`` will create the directory recursively, so it will be created even if it's parent directories doesn't exist.");
 }
 
 // Add every raw command automatically to autocomplete.
-// for (let i = 0; i < cmdList.length; i++) {
-//   const cmdElm = cmdList[i];
-//   var toCheck = "";
-//   if (!cmdElm.multi) {
-//     toCheck = ac.completions.findIndex(cmdElm.command);
-//   }
-//   else {
-//     toCheck = ac.completions.findIndex(cmdElm.command[0]);
-//   }
-//   if (ac.completions.findIndex(toCheck) == -1) {
-//     ac.completions.push(toCheck);
-//   }
-// }
+for (let i = 0; i < cmdList.length; i++) {
+  const cmdElm = cmdList[i];
+  var toCheck = "";
+  if (!cmdElm.multi) {
+    toCheck = cmdElm.command;
+  }
+  else {
+    toCheck = cmdElm.command[0];
+  }
+  var index = ac.completions.indexOf(toCheck);
+  if (index < 0) {
+    ac.completions.push(toCheck);
+  }
+}
 
 // Add each command to a help autocomplete.
 for (let i = 0; i < cmdList.length; i++) {
@@ -798,9 +972,59 @@ function resetClickables()
   }
 }
 
+
+class InputListener
+{
+  /**
+   * Create a new InputListener
+   * @param {(this: InputListener, command: string, args: string[], rest: string, clickReset: boolean) => any} fn The function to execute on the input.
+   */
+  constructor(fn) {
+    /**
+     * The function to execute on the input.
+     */
+    this.fn = fn;
+
+    InputListener.activeListener = this;
+  }
+
+  /**
+   * Clear/Stop the Active Listener.
+   */
+  clearListener() {
+    InputListener.clearListener();
+  }
+
+  /**
+   * Clear/Stop the Active Listener.
+   */
+  stop() {
+    InputListener.clearListener();
+  }
+
+  /**
+   * Clear/Stop the Active Listener.
+   */
+  static stop() {
+    InputListener.clearListener();
+  }
+  
+  /**
+   * Clear/Stop the Active Listener.
+   */
+  static clearListener() {
+    InputListener.activeListener = undefined;
+  }
+
+  /**
+   * @type {InputListener}
+   */
+  static activeListener;
+}
+
 /**
- * 
- * @param {string} command 
+ * Run a command based on a string.
+ * @param {string} command Command string to run.
  */
 async function runCMD(command, clickReset = true)
 {
@@ -809,6 +1033,7 @@ async function runCMD(command, clickReset = true)
     resetClickables();
   }
 
+  
   lastCMD = command;
   const rgx = /[^\s"']+|"([^"]*)"|'([^']*)'/g;
   const log = document.querySelector("#log");
@@ -816,21 +1041,25 @@ async function runCMD(command, clickReset = true)
   var fullCommand = command;
   var args = command.match(rgx);
   var rest = command.substring(args[0].length+1);
-
+  
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
     if ((arg.startsWith("\"") && arg.endsWith("\"")) || arg.startsWith("'") && arg.endsWith("'")) {
       args[i] = arg.substring(1, arg.length-1);
     }
   }
-
+  
+  
   var command = args[0];
-
   
-  cmdInput.setAttribute("disabled", true);
   cmdInput.value = "";
+  if (InputListener.activeListener instanceof InputListener) {
+    InputListener.activeListener.fn(command, args, rest, clickReset);
+    return;
+  }
   
-  cmdlog("<span style=\"color: green;\">&gt; </span> "+fullCommand);
+  cmdlog("<span style=\"color: green;\">"+sftpData.username+"@"+sftpData.host+"</span>:<span style=\"color: blue;\">"+cDirectory+" $ </span> "+fullCommand);
+  cmdInput.setAttribute("disabled", true);
   
   for (let i = 0; i < cmdList.length; i++) {
     const cmd = cmdList[i];
@@ -1045,7 +1274,7 @@ function getItemFromPath(path){
 }
 
 /**
- * Unset a value from an array.
+ * Removes a value from an array directly.
  * @param {any[]} array 
  * @param {number} index 
  */
@@ -1093,7 +1322,5 @@ const funcs = {
 setTimeout(async () => {
   clearLog();
   await runCMD("connect");
-  cmdlog(`Connected to `);
-  await runCMD("cd ../wl");
 }, 100);
 
