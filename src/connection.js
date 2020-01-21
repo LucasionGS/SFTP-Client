@@ -315,6 +315,9 @@ function addDefaultCommands()
 {
   // New Connection config
   new Command("createconnection", function() {
+    if (fs.existsSync("./connections/")) {
+      fs.mkdirSync("./connections/");
+    }
     tmp_newSftp.host = "";
     tmp_newSftp.port = 22;
     tmp_newSftp.username = "";
@@ -349,7 +352,7 @@ function addDefaultCommands()
             cmdlog("Enter a name for the config:");
             new InputListener((command, args, rest) => {
               var full = args.join("_");
-              fs.writeFileSync("./"+full+".sftp.json", JSON.stringify(tmp_newSftp));
+              fs.writeFileSync("./connections/"+full+".sftp.json", JSON.stringify(tmp_newSftp));
               cmdlog("Created a new config as " + full);
               ac.enabled = true;
 
@@ -365,7 +368,7 @@ function addDefaultCommands()
   new Command("connect", async function(command, args) {
     if (args[1]) {
       try {
-        sftpData = JSON.parse(fs.readFileSync(args[1]+".sftp.json"));
+        sftpData = JSON.parse(fs.readFileSync("./connections/"+args[1]+".sftp.json"));
       } catch (error) {
         logError(error);
         return;
@@ -373,10 +376,11 @@ function addDefaultCommands()
     }
     else {
       try {
-        sftpData = JSON.parse(fs.readFileSync("./default.sftp.json"));
+        sftpData = JSON.parse(fs.readFileSync("./connections/default.sftp.json"));
       } catch (error) {
         logError("Cannot parse or cannot find a ``default.sftp.json`` file.");
         cmdlog("Create a default config file by using the command ``createconnection`` and naming it ``default``");
+        cmdlog("The default config will always be used to connect on startup or by using the command ``connect`` without any arguments");
         cmdlog("Click here to create a config.", "green", () => {
           runCMD("createconnection");
         });
