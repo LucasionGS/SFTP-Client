@@ -316,7 +316,9 @@ function addDefaultCommands()
   // New Connection config
   new Command("createconnection", function() {
     if (fs.existsSync("./connections/")) {
-      fs.mkdirSync("./connections/");
+      fs.mkdirSync("./connections/", {
+        recursive: true
+      });
     }
     tmp_newSftp.host = "";
     tmp_newSftp.port = 22;
