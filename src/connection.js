@@ -39,7 +39,10 @@ let tmp_newSftp = {
  * @type {HTMLInputElement}
  */
 let g_cmdInput = document.querySelector("div#input input");
-let ac = new AutoComplete(document.querySelector("div#input input"), [
+let ac = new AutoComplete(document.querySelector("div#input input"), );
+ac.onlyFullText = true;
+
+var defaultAutoComplete = [
   // Command List autocompletion possible combos
 
   // help
@@ -145,8 +148,19 @@ let ac = new AutoComplete(document.querySelector("div#input input"), [
   // restart
   "restart",
   "reload",
-]);
-ac.onlyFullText = true;
+];
+
+ac.completions = defaultAutoComplete;
+
+/**
+ * @type {string[]}
+ */
+var curDirList = [];
+
+/**
+ * @type {string[]}
+ */
+var curFileList = [];
 
 let fileCM = new ContextMenu([
   {
@@ -315,7 +329,7 @@ function addDefaultCommands()
 {
   // New Connection config
   new Command("createconnection", function() {
-    if (fs.existsSync("./connections/")) {
+    if (!fs.existsSync("./connections/")) {
       fs.mkdirSync("./connections/", {
         recursive: true
       });
@@ -380,6 +394,7 @@ function addDefaultCommands()
       try {
         sftpData = JSON.parse(fs.readFileSync("./connections/default.sftp.json"));
       } catch (error) {
+        // sftpData = null;
         logError("Cannot parse or cannot find a ``default.sftp.json`` file.");
         cmdlog("Create a default config file by using the command ``createconnection`` and naming it ``default``");
         cmdlog("The default config will always be used to connect on startup or by using the command ``connect`` without any arguments");
@@ -388,6 +403,10 @@ function addDefaultCommands()
         });
         
       }
+    }
+
+    if (sftpData == null) {
+      return;
     }
     // Fixing any unfilled port.
     if (!sftpData.host) {
@@ -429,6 +448,8 @@ function addDefaultCommands()
   
   // File list command
   new Command(["ls", "list"], async function(cmd, args, rest) {
+    curDirList = [];
+    curFileList = [];
     try {
       var files = await sftp.list(cDirectory);
       cmdlog(separator(true), false);
@@ -469,17 +490,18 @@ function addDefaultCommands()
           // color = "#4287f5";
           options.oncontextmenu = "directoryCM.show(this);";
           options.class = "dirEnt";
-          var dirName = cDirectory+"/"+file.name;
-          if (!ac.completions.includes("cd "+dirName+"/")) {
-            ac.completions.push("cd "+dirName+"/");
+          var dirName = file.name;
+          // var dirName = cDirectory+"/"+file.name;
+          if (!curDirList.includes("cd "+dirName)) {
+            curDirList.push("cd "+dirName);
           }
         }
         if (file.type == "-") {
           // color = "lightgrey";
           options.class = "fileEnt";
-          var fileName = cDirectory+"/"+file.name;
-          if (!ac.completions.includes("get \""+fileName+"\"")) {
-            ac.completions.push("get \""+fileName+"\"");
+          var fileName = file.name;
+          if (!curFileList.includes("get \""+fileName+"\"")) {
+            curFileList.push("get \""+fileName+"\"");
           }
           fn = function() {
             var name = file.name;
@@ -496,9 +518,10 @@ function addDefaultCommands()
           // color = "lightblue";
           options.oncontextmenu = "directoryCM.show(this);";
           options.class = "linkEnt";
-          var dirName = cDirectory+"/"+file.name;
-          if (!ac.completions.includes("cd "+dirName+"/")) {
-            ac.completions.push("cd "+dirName+"/");
+          var dirName = file.name;
+          // var dirName = cDirectory+"/"+file.name;
+          if (!curDirList.includes("cd "+dirName)) {
+            curDirList.push("cd "+dirName);
           }
         }
 
@@ -1240,6 +1263,10 @@ async function getPath(path)
 
 // Key presses
 window.addEventListener("keydown", function(e) {
+  /**
+   * @type {HTMLInputElement}
+   */
+  const cmdInput = document.querySelector("#input input");
   if (e.ctrlKey && e.key.toLowerCase() == "t") {
     toggleCMD();
   }
@@ -1247,13 +1274,21 @@ window.addEventListener("keydown", function(e) {
     clearLog();
   }
   if (e.key == "ArrowUp") {
-    const cmdInput = document.querySelector("#input input");
     if (document.activeElement == cmdInput) {
       cmdInput.value = lastCMD;
       setTimeout(() => {
         cmdInput.setSelectionRange(lastCMD.length, lastCMD.length);
       }, 0);
     }
+  }
+  if (cmdInput.value.startsWith("cd ")) {
+    ac.completions = curDirList;
+  }
+  else if (cmdInput.value.startsWith("get ")) {
+    ac.completions = curFileList;
+  }
+  else {
+    ac.completions = defaultAutoComplete;
   }
 });
 
